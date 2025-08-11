@@ -1,0 +1,1 @@
+echo CFLAGS='-O2 -march=skylake -fno-stack-protector -flto=auto -ffat-lto-objects -fno-stack-clash-protection -fcf-protection=none -U_FORTIFY_SOURCE'

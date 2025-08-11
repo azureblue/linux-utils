@@ -1,0 +1,23 @@
+#!/bin/bash
+CHROOTS_DST_PATH="/media/chroots"
+
+if [[ $# -lt 1 ]]; then
+  echo "Missing chroot name"
+  exit 1
+fi
+
+CHROOT_PATH="$CHROOTS_DST_PATH/$1"
+
+if ! [[ -d $CHROOT_PATH ]]; then
+  echo "chroot not created"
+  exit 1
+fi
+
+if ! [[ -f "$CHROOT_PATH/.chroot" ]]; then
+  echo "chroot not configured"
+  exit 1
+fi
+
+echo "entering $CHROOT_PATH..."
+
+sudo chroot "$CHROOT_PATH" su konrad

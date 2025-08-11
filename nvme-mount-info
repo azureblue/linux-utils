@@ -1,0 +1,3 @@
+#!/bin/bash
+
+df $1 | cut -d " " -f1 | grep nvme | xargs  sudo nvme smart-log

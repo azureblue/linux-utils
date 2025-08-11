@@ -1,0 +1,25 @@
+#!/bin/bash
+freq=$1
+N=$(nproc)
+if [[ $# -eq 2 ]]; then
+  if [[ $1 -ne "max" && $1 -ne "min" ]]; then
+  	echo "invalid argument: $1"
+  	exit -1
+  fi
+  
+  echo Setting $1 freq "${2}Mhz"
+  for ((i = 0 ; i < N ; i++ )); do 
+    echo ${2}000 > /sys/bus/cpu/devices/cpu${i}/cpufreq/scaling_${1}_freq
+  done
+  for ((i = 0 ; i < N ; i++ )); do 
+      printf "cpu $i: min "; cat /sys/bus/cpu/devices/cpu$i/cpufreq/scaling_min_freq | tr '\n' ' ';
+      printf "max "; cat /sys/bus/cpu/devices/cpu$i/cpufreq/scaling_max_freq
+  done
+
+ else
+  for ((i = 0 ; i < N ; i++ )); do 
+    printf "cpu $i: min "; cat /sys/bus/cpu/devices/cpu$i/cpufreq/scaling_min_freq | tr '\n' ' ';
+    printf "max "; cat /sys/bus/cpu/devices/cpu$i/cpufreq/scaling_max_freq
+  done
+
+fi 

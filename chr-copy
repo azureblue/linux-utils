@@ -1,0 +1,30 @@
+#!/bin/bash
+
+CHROOTS_SRC_PATH="/media/ext1"
+CHROOT_DST_PATH="/media/ram/chroots"
+
+if [[ $# -lt 1 ]]; then
+  echo "Missing chroot name"
+  exit 1
+fi
+
+
+CHROOT_PATH="$CHROOT_DST_PATH"
+CHROOT_SRC_PATH="$CHROOTS_SRC_PATH/$1"
+
+mkdir -p $CHROOT_PATH
+
+if ! [[ -d $CHROOT_PATH ]]; then
+  echo "missing dir"
+  exit 1
+fi
+
+if ! [[ -d $CHROOT_SRC_PATH ]]; then
+  echo "missing src chroot"
+  exit 1
+fi
+
+echo "copying: $CHROOT_SRC_PATH to $CHROOT_PATH..."
+sudo cp -ax $CHROOT_SRC_PATH $CHROOT_PATH
+
+echo $CHROOT_PATH

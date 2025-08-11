@@ -1,0 +1,5 @@
+if [ "$2" = "-k" ]; then
+  kpg $1
+fi
+ps -e -o user,pid,%cpu,%mem,cmd | grep -v grep | grep -i --color=always $1
+

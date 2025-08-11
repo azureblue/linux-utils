@@ -1,0 +1,4 @@
+#!/bin/bash
+
+ddcutil -d 1  setvcp 12 $(($1 + 1)) 2>/dev/null
+ddcutil -d 2  setvcp 12 $1 2>/dev/null

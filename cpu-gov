@@ -1,0 +1,19 @@
+#!/bin/bash
+N=$(nproc)
+
+if [[ $# -eq 1 ]]; then
+  for ((i = 0 ; i < N ; i++ )); do 
+    echo $1 > /sys/bus/cpu/devices/cpu$i/cpufreq/scaling_governor
+  done
+  for ((i = 0 ; i < N ; i++ )); do 
+    printf "cpu $i: "; cat /sys/bus/cpu/devices/cpu$i/cpufreq/scaling_governor
+  done
+
+else
+  echo "available governors: "
+  cat /sys/bus/cpu/devices/cpu0/cpufreq/scaling_available_governors
+  
+  for ((i = 0 ; i < N ; i++ )); do 
+    printf "cpu $i: "; cat /sys/bus/cpu/devices/cpu$i/cpufreq/scaling_governor
+  done
+fi

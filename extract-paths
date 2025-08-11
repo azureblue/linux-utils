@@ -1,0 +1,27 @@
+#!/usr/bin/java --source 17
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Set;
+import java.util.regex.MatchResult;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+
+public class IncludePathsExtractor {
+
+    static Pattern pattern = Pattern.compile("-I[\\S]+");
+
+    public static void main(String[] args) throws IOException {
+        String content = Files.readString(Paths.get(args[0]));
+
+        Set<String> paths = pattern.matcher(content).results()
+                .map(MatchResult::group)
+                .map(str -> str.substring(2))
+                .collect(Collectors.toSet());
+
+
+        paths.forEach(System.out::println);
+    }
+}

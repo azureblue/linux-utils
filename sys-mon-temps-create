@@ -1,0 +1,32 @@
+#!/bin/bash
+if [ -d /tmp/.sys-mon ]
+then
+  exit 0
+fi
+mkdir /tmp/.sys-mon
+#BASE_PATH=""
+
+if [ -e /sys/class/hwmon/hwmon1/temp4_input ]
+then
+	BASE_PATH="/sys/class/hwmon/hwmon1/"
+elif [ -e /sys/class/hwmon/hwmon2/temp4_input ]
+then
+        BASE_PATH="/sys/class/hwmon/hwmon2/"
+elif [ -e /sys/class/hwmon/hwmon3/temp4_input ]
+then
+        BASE_PATH="/sys/class/hwmon/hwmon3/"
+elif [ -e /sys/class/hwmon/hwmon4/temp4_input ]
+then
+        BASE_PATH="/sys/class/hwmon/hwmon4/"
+elif [ -e /sys/class/hwmon/hwmon5/temp4_input ]
+then
+        BASE_PATH="/sys/class/hwmon/hwmon5/"
+elif [ -e /sys/class/hwmon/hwmon6/temp4_input ]
+then
+        BASE_PATH="/sys/class/hwmon/hwmon6/"
+fi
+
+ln -s ${BASE_PATH}temp2_input /tmp/.sys-mon/temp2
+ln -s ${BASE_PATH}temp3_input /tmp/.sys-mon/temp3
+ln -s ${BASE_PATH}temp4_input /tmp/.sys-mon/temp4
+ln -s ${BASE_PATH}temp5_input /tmp/.sys-mon/temp5

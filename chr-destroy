@@ -1,0 +1,33 @@
+#!/bin/bash
+set -e
+CHROOTS_DST_PATH="/media/chroots"
+
+if [[ $# -lt 1 ]]; then
+  echo "Missing chroot name"
+  exit 1
+fi
+
+CHROOT_PATH="$CHROOTS_DST_PATH/$1"
+
+if ! [[ -d $CHROOT_PATH ]]; then
+  echo "missing chroot dir"
+  exit 1
+fi
+
+if ! [[ -f "$CHROOT_PATH/.chroot" ]]; then
+  echo "chroot not configured?"
+  exit 1
+fi
+
+echo "unmounting..."
+
+sudo umount "${CHROOT_PATH}/proc" || /bin/true
+sudo umount "${CHROOT_PATH}/sys" || /bin/true
+sudo umount "${CHROOT_PATH}/dev/pts/" || /bin/true
+sudo umount "${CHROOT_PATH}/tmp" || /bin/true
+sudo umount "${CHROOT_PATH}/media/ram" || /bin/true
+sudo umount ${CHROOT_PATH}
+
+sudo rm -rf $CHROOT_PATH
+
+echo "chroot destroyed"

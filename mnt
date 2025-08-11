@@ -1,0 +1,4 @@
+#!/bin/bash
+
+sudo mount -m /dev/$1 /media/konrad/$1 -o defaults,rw,noatime,users,X-mount.owner=konrad
+sudo chmod o+w /media/konrad/$1

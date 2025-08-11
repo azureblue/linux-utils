@@ -1,0 +1,59 @@
+#!/bin/bash
+CHROOTS_DST_PATH="/media/chroots"
+
+if [[ $# -lt 1 ]]; then
+  echo "Missing chroot name"
+  exit 1
+fi
+CHROOT_PATH="$CHROOTS_DST_PATH/$1"
+
+if ! [[ -d $CHROOT_PATH ]]; then
+  echo "chroot not created"
+  exit 1
+fi
+
+if ! [[ -f "$CHROOT_PATH/.chroot" ]]; then
+  echo "chroot not configured"
+  exit 1
+fi
+
+if [ -t 0 ]; then
+
+  if [[ $# -lt 2 ]]; then
+    echo "Missing script path"
+    exit 1
+  fi
+
+
+  FILE_PATH=""#$(realpath $2)
+
+  if [[ $# -eq 2 ]]; then
+    FILE_PATH=$(realpath $2)
+  else
+    FILE_PATH=$(realpath $3)
+  fi
+  
+
+  if ! [[ -f "$FILE_PATH" ]]; then
+    echo "Not a file"
+    exit 1
+  fi
+
+  sudo cp $FILE_PATH "$CHROOTS_DST_PATH/$1/tmp"
+  FILE=$(basename "$FILE_PATH")
+  sudo chmod +x "$CHROOTS_DST_PATH/$1/tmp/$FILE"
+  if [[ $# -lt 3 ]]; then
+    sudo chroot "$CHROOT_PATH" /tmp/$FILE
+  else
+    sudo chroot "$CHROOT_PATH" su $2 /tmp/$FILE
+  fi
+
+  sudo rm "$CHROOTS_DST_PATH/$1/tmp/$FILE"
+else
+  if [[ $# -lt 2 ]]; then
+    sudo chroot "$CHROOT_PATH" bash
+  else
+    sudo chroot "$CHROOT_PATH" su $2 
+  fi
+fi
+# sudo chroot "$CHROOT_PATH" su konrad

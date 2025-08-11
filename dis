@@ -1,0 +1,16 @@
+#!/bin/bash
+
+DP1="0x0F"
+DP2="0x10"
+HDMI1="0x11"
+HDMI2="0x12"
+
+if (( $# == 1)); then
+    ddcutil -n "9TG4641B2FAL" --less-sleep --sleep-multiplier 0.4 setvcp 0x60 ${!1}
+else
+    ddcutil -n "9TG4641B2FAL" --less-sleep --sleep-multiplier 0.4 setvcp 0x60 ${!1}
+fi
+
+
+#ddcutil --model "DELL 2314H" --less-sleep --sleep-multiplier 0.4 setvcp 0x12 $1
+

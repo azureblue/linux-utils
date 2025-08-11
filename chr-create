@@ -1,0 +1,53 @@
+#!/bin/bash
+set -e
+CHROOTS_SRC_PATH="/media/ext1"
+CHROOTS_DST_PATH="/media/chroots"
+
+if [[ $# -lt 1 ]]; then
+  echo "Missing chroot name"
+  exit 1
+fi
+
+SRC_NAME=$1
+DST_NAME=$1
+
+if [[ $# -eq 2 ]]; then
+  DST_NAME=$2
+fi
+
+CHROOT_PATH="$CHROOTS_DST_PATH/$DST_NAME"
+CHROOT_SRC_PATH="$CHROOTS_SRC_PATH/$SRC_NAME"
+
+mkdir -p $CHROOT_PATH
+
+if ! [[ -d $CHROOT_PATH ]]; then
+  echo "missing dir"
+  exit 1
+fi
+
+if [[ -f "$CHROOT_PATH/.chroot" ]]; then
+  echo "chroot already configured"
+  exit 1
+fi
+
+if ! [[ -d $CHROOT_SRC_PATH ]]; then
+  echo "missing src chroot"
+  exit 1
+fi
+
+sudo mount -t tmpfs -o defaults,rw,noatime,users,auto,dev,exec,suid,size=16123M tmpfs $CHROOT_PATH
+
+echo "copying: $CHROOT_SRC_PATH to $CHROOT_PATH..."
+sudo cp -ax $CHROOT_SRC_PATH/. $CHROOT_PATH
+sudo touch "$CHROOT_PATH/.chroot"
+
+echo "mounting..."
+
+sudo mount -t proc none "${CHROOT_PATH}/proc"
+sudo mount -t sysfs none "${CHROOT_PATH}/sys"
+sudo mount --bind /dev/pts/ "${CHROOT_PATH}/dev/pts/"
+# sudo mount -t tmpfs tmpfs "${CHROOT_PATH}/tmp" -o defaults,rw,noatime,size=1000M
+# sudo mount -m -t tmpfs tmpfs "${CHROOT_PATH}/media/ram" -o defaults,rw,noatime,users,auto,exec,size=8123M
+
+echo "chroot ready"
+echo $CHROOT_PATH
