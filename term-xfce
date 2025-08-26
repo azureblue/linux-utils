@@ -1,0 +1,2 @@
+#!/bin/bash
+nohup env GTK_CSD=1 GTK_THEME="Greybird-dark" xfce4-terminal --disable-server $@ >/dev/null 2>&1 &
