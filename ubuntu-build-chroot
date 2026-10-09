@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+# Ubuntu 26.04 build environment in tmpfs.
+# sudo ./ubuntu-build-chroot.sh init resolute0 [--post-script SCRIPT] [extra packages...]
+# sudo ./ubuntu-build-chroot.sh enter resolute0 [command args...]
+# Optional: sudo TMPFS_SIZE=16G ./ubuntu-build-chroot.sh init ...
+set -Eeuo pipefail
+
+die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+usage() {
+    cat <<'EOF'
+Usage:
+  sudo ./ubuntu-build-chroot.sh init NAME [--copy HOST_PATH CHROOT_PATH] [--post-script SCRIPT] [PACKAGE...]
+  sudo ./ubuntu-build-chroot.sh copy NAME HOST_PATH CHROOT_PATH
+  sudo ./ubuntu-build-chroot.sh command NAME PROGRAM [ARG...]
+  sudo ./ubuntu-build-chroot.sh enter NAME [COMMAND ARG...]
+  sudo ./ubuntu-build-chroot.sh remove NAME
+
+NAME selects /media/chroots/NAME. Only amd64 is supported.
+init creates a dedicated tmpfs, bootstraps Ubuntu 26.04 and installs packages.
+--post-script runs a host Bash script inside the chroot as root, in /build,
+after package installation (on each init invocation that supplies the option).
+--copy can be repeated; copies run after package installation, before the script.
+Directory contents are merged into CHROOT_PATH; files use that exact filename.
+Copies preserve source permissions and numeric ownership, and overwrite files.
+CHROOT_PATH must be absolute; existing destination symlinks are refused.
+copy performs a copy into an existing chroot without reinstalling packages.
+command runs a program as root inside the chroot and returns its exit status.
+Use command NAME /bin/bash -c '...' for shell expressions or multiple commands.
+command starts no interactive shell; setup operations require idle chroots.
+remove unmounts the dedicated tmpfs and removes the empty mount directory.
+An active init/enter session prevents removal; no processes are killed.
+Repeat init to add packages to an already initialized environment.
+enter opens a root login by default. Use `su - konrad` to compile as a user.
+The konrad account gets its initial home files from the chroot's /etc/skel.
+The dedicated tmpfs is mounted with noatime.
+TMPFS_SIZE defaults to 16G (a limit, not a reservation).
+Copy build results out before unmounting or rebooting.
+EOF
+}
+
+[[ ${1:-} != --help && ${1:-} != -h ]] || { usage; exit 0; }
+[[ $# -ge 2 ]] || { usage; exit 2; }
+action=$1
+shift
+[[ $EUID -eq 0 ]] || die 'Run with sudo.'
+name=$1
+shift
+[[ $name =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$ ]] || die 'Invalid name: use 1-64 letters, digits, underscores or hyphens.'
+base=/media/chroots
+root="$base/$name"
+suite=resolute
+marker="$root/.ubuntu-build-chroot"
+mount_source="ubuntu-build:$name"
+self=$(realpath -- "$0")
+[[ $(realpath -m -- "$base") == "$base" && ! -L $root ]] || die 'Chroot paths must not contain symlinks.'
+
+# Shared locks permit multiple shells. Exclusive locks protect setup/removal.
+# The descriptor is inherited by the namespace process and chroot commands.
+case "$action" in
+    init|enter|remove|copy|command)
+        mkdir -p /run/lock/ubuntu-build-chroots
+        exec 9>"/run/lock/ubuntu-build-chroots/$name.lock"
+        if [[ $action == enter ]]; then
+            flock -sn 9 || die 'Chroot is being initialized or removed.'
+        else
+            flock -xn 9 || die 'Chroot is in use; close its sessions first.'
+        fi
+        ;;
+    __init|__enter) ;;
+    *) usage; exit 2 ;;
+esac
+
+check_mount() {
+    mountpoint -q -- "$root" || die 'Chroot tmpfs is not mounted.'
+    [[ $(findmnt -n -o FSTYPE -M "$root") == tmpfs &&
+       $(findmnt -n -o SOURCE -M "$root") == "$mount_source" ]] ||
+        die 'Refusing to use or remove a mount not created by this script.'
+}
+
+validate_copy() {
+    [[ -f $1 || -d $1 ]] || die "Copy source must be a regular file or directory: $1"
+    [[ $2 == /* && /${2#/}/ != */../* ]] || die 'Copy destination must be an absolute chroot path without .. components.'
+    [[ $2 != *$'\n'* && $2 != *$'\r'* ]] || die 'Copy destination must not contain line breaks.'
+}
+
+copy_into_chroot() {
+    local source=$1 destination=$2 target part cursor
+    validate_copy "$source" "$destination"
+    destination=$(realpath -ms -- "$destination")
+    case "$destination" in
+        /dev|/dev/*|/proc|/proc/*|/sys|/sys/*)
+            die 'Cannot copy into runtime filesystems /dev, /proc or /sys.' ;;
+    esac
+    target="$root$destination"
+    # Check each path component before creating directories or overwriting files.
+    cursor=$root
+    local -a components
+    IFS=/ read -r -a components <<< "${destination#/}"
+    for part in "${components[@]}"; do
+        [[ -n $part ]] || continue
+        cursor="$cursor/$part"
+        [[ ! -L $cursor ]] || die "Destination contains a symlink: $cursor"
+    done
+    if [[ -d $source ]]; then
+        # Refuse existing links in merge targets too, preventing host-side cp
+        # from following links outside the chroot during recursive copying.
+        if [[ -d $target ]]; then
+            [[ -z $(find "$target" -type l -print -quit) ]] ||
+                die 'Directory destination contains symlinks; use a new directory or copy individual files.'
+        fi
+        mkdir -p -- "$target"
+        cp -a --remove-destination -- "$source/." "$target/"
+    else
+        [[ ! -d $target ]] || die 'For a file, supply the full destination filename.'
+        mkdir -p -- "$(dirname -- "$target")"
+        cp -a --remove-destination -T -- "$source" "$target"
+    fi
+    printf 'Copied: %s -> %s:%s\n' "$source" "$name" "$destination"
+}
+
+chroot_env() {
+    chroot "$root" /usr/bin/env -i \
+        HOME=/root USER=root LOGNAME=root SHELL=/bin/bash \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        TERM="${TERM:-xterm}" LANG=C.UTF-8 DEBIAN_FRONTEND=noninteractive "$@"
+}
+
+mount_runtime() {
+    mkdir -p "$root"/{dev,proc,sys,run,tmp}
+    mount --rbind /dev "$root/dev"
+    mount --make-rslave "$root/dev"
+    mount -t proc proc "$root/proc"
+    mount --bind /sys "$root/sys"
+    mount -o remount,bind,ro "$root/sys"
+    # /run and /tmp already reside in the target's tmpfs.
+    chmod 1777 "$root/tmp"
+    cp -L --remove-destination /etc/resolv.conf "$root/etc/resolv.conf"
+}
+
+case "$action" in
+    init)
+        command -v debootstrap >/dev/null || die 'Install debootstrap and ubuntu-keyring on the host.'
+        command -v unshare >/dev/null || die 'Install util-linux on the host.'
+        [[ $(dpkg --print-architecture) == amd64 ]] || die 'An amd64 host is required.'
+        post_script=
+        packages=()
+        copy_args=()
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --copy)
+                    [[ $# -ge 3 ]] || die '--copy requires a host source and an absolute chroot destination.'
+                    source=$(realpath -e -- "$2")
+                    validate_copy "$source" "$3"
+                    copy_args+=("$source" "$3")
+                    shift 3
+                    ;;
+                --post-script)
+                    [[ $# -ge 2 && -z $post_script ]] || die 'Supply --post-script exactly once with a file path.'
+                    post_script=$(realpath -e -- "$2")
+                    [[ -f $post_script && -r $post_script ]] || die 'Post-script must be a readable regular file.'
+                    bash -n "$post_script"
+                    shift 2
+                    ;;
+                --) shift; packages+=("$@"); break ;;
+                -*) die "Unknown option: $1" ;;
+                *) packages+=("$1"); shift ;;
+            esac
+        done
+        mkdir -p -- "$root"
+        if mountpoint -q -- "$root"; then
+            check_mount
+            [[ -f $marker && $(cat "$marker") == "$suite" ]] ||
+                die 'Incomplete bootstrap: remove this chroot and run init again.'
+            mount -o remount,noatime "$root"
+        else
+            [[ -z $(find "$root" -mindepth 1 -maxdepth 1 -print -quit) ]] ||
+                die 'The mount directory must be empty.'
+            mount -t tmpfs -o "size=${TMPFS_SIZE:-16G},mode=0755,noatime" "$mount_source" "$root"
+        fi
+        exec unshare --mount --propagation private -- bash "$self" __init "$name" "$post_script" "$((${#copy_args[@]} / 2))" "${copy_args[@]}" "${packages[@]}"
+        ;;
+    copy)
+        [[ $# -eq 2 ]] || die 'Usage: copy NAME HOST_PATH CHROOT_PATH'
+        check_mount
+        [[ -f $marker && $(cat "$marker") == "$suite" ]] || die 'Run init first.'
+        source=$(realpath -e -- "$1")
+        copy_into_chroot "$source" "$2"
+        ;;
+    enter)
+        check_mount
+        [[ -f $marker && $(cat "$marker") == "$suite" ]] || die 'Run init first.'
+        exec unshare --mount --propagation private --pid --fork --kill-child=SIGKILL -- bash "$self" __enter "$name" "$@"
+        ;;
+    command)
+        [[ $# -ge 1 ]] || die 'Usage: command NAME PROGRAM [ARG...]'
+        check_mount
+        [[ -f $marker && $(cat "$marker") == "$suite" ]] || die 'Run init first.'
+        # Temporary PID/mount namespaces ensure any background descendants
+        # are terminated when this invocation's namespace init exits.
+        exec unshare --mount --propagation private --pid --fork --kill-child=SIGKILL -- bash "$self" __enter "$name" "$@"
+        ;;
+    remove)
+        [[ $# -eq 0 ]] || die 'remove accepts only a chroot name.'
+        if mountpoint -q -- "$root"; then
+            check_mount
+            # Ordinary umount: fail if busy or containing other host mounts.
+            # No lazy/forced unmount and no recursive deletion of host files.
+            umount -- "$root"
+        fi
+        if [[ -d $root ]]; then
+            rmdir -- "$root" || die 'Mount is gone, but the underlying directory is not empty; left untouched.'
+        fi
+        printf 'Removed: %s\n' "$name"
+        ;;
+    __init)
+        post_script=$1
+        copy_count=$2
+        shift 2
+        copy_args=()
+        for ((i=0; i<copy_count; i++)); do
+            copy_args+=("$1" "$2")
+            shift 2
+        done
+        mirror=http://archive.ubuntu.com/ubuntu
+        security=http://security.ubuntu.com/ubuntu
+        if [[ ! -f $marker ]]; then
+        	printf "bootstraping... "
+            debootstrap --arch=amd64 --variant=buildd \
+                --keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg \
+                "$suite" "$root" "$mirror" > /dev/null
+            echo "done"
+        fi
+        mount_runtime
+        # Replace debootstrap's sources with binary AND source repositories.
+        rm -f "$root/etc/apt/sources.list"
+        cat > "$root/etc/apt/sources.list.d/ubuntu.sources" <<EOF
+Types: deb deb-src
+URIs: $mirror
+Suites: $suite $suite-updates
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb deb-src
+URIs: $security
+Suites: $suite-security
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
+        cat > "$root/usr/sbin/policy-rc.d" <<'EOF'
+#!/bin/sh
+exit 101
+EOF
+        chmod 0755 "$root/usr/sbin/policy-rc.d"
+        printf "installing deb tools... "
+        chroot_env apt-get update > /dev/null
+        chroot_env apt-get install -y --no-install-recommends -- \
+            build-essential devscripts debhelper dpkg-dev \
+            ca-certificates ubuntu-keyring git less nano "$@" > /dev/null 
+        if ! chroot "$root" id konrad >/dev/null 2>&1; then
+            chroot "$root" useradd --create-home --skel /etc/skel -s /bin/bash -G sudo,adm konrad
+        fi
+        echo "done"
+        mkdir -p "$root/build"
+        chroot "$root" chown konrad:konrad /build
+        chroot "$root" apt-get clean > /dev/null
+        printf '%s\n' "$suite" > "$marker"
+        for ((i=0; i<${#copy_args[@]}; i+=2)); do
+            copy_into_chroot "${copy_args[i]}" "${copy_args[i+1]}"
+        done
+        if [[ -n $post_script ]]; then
+            printf 'Running post-script: %s\n' "$post_script"
+            chroot_env /bin/bash -Eeuo pipefail -c 'cd /build; exec /bin/bash -Eeuo pipefail -s' < "$post_script"
+            chroot "$root" apt-get clean
+        fi
+        printf 'Ready: %s\nUse: sudo %q enter %q\n' "$root" "$self" "$name"
+        ;;
+    __enter)
+        mount_runtime
+        if [[ $# -eq 0 ]]; then
+            set -- /bin/bash --login
+        fi
+        chroot_env "$@"
+        ;;
+    *) usage; exit 2 ;;
+esac
