@@ -1,0 +1,16 @@
+#!/bin/bash
+exec /usr/bin/google-chrome-stable \
+  --profile-directory="Default" \
+  --ignore-gpu-blocklist \
+  --disable-gpu-driver-bug-workaround \
+  --enable-features=AcceleratedVideoEncoder,VaapiIgnoreDriverChecks,Vulkan,DefaultANGLEVulkan,VulkanFromANGLE \
+  --disable-features=ExtensionManifestV2Unsupported,ExtensionManifestV2Disabled,WebContentsForceDark,SiteIsolationTrials \
+  --disable-seccomp-filter-sandbox \
+  --no-sandbox \
+  --disable-setuid-sandbox \
+  --disable-gpu-sandbox \
+  --disable-logging \
+  --disable-metrics \
+  --disable-breakpad \
+  --ozone-platform=x11 \
+  "$@"
