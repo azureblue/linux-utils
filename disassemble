@@ -2,15 +2,17 @@
 
 # Check if the minimum required arguments are provided
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-    echo "Usage: $0 <path_to_binary> <symbol_name_or_fragment> [index]"
+    echo "Usage: $0 <path_to_binary> <symbol_name_or_fragment_or_-> [index]"
     echo "Example: $0 /lib/x86_64-linux-gnu/libc.so.6 memcpy"
     echo "Example with index: $0 /lib/x86_64-linux-gnu/libc.so.6 memcpy 2"
+    echo "Example to list all symbols: $0 /lib/x86_64-linux-gnu/libc.so.6 -"
+    echo "Example to list all and pick index: $0 /lib/x86_64-linux-gnu/libc.so.6 - 42"
     exit 1
 fi
 
 BINARY="$1"
 SEARCH_TERM="$2"
-INDEX="$3" # Optional third parameter
+INDEX="$3" # Optional third parameter (number)
 
 # Check if the file exists
 if [ ! -f "$BINARY" ]; then
@@ -18,26 +20,61 @@ if [ ! -f "$BINARY" ]; then
     exit 1
 fi
 
-# 1. Fetch matching symbols from both static (-s) and dynamic (-D) tables
-RAW_LINES=$( (readelf -s "$BINARY" 2>/dev/null; readelf -D "$BINARY" 2>/dev/null) | grep -E "[[:space:]]${SEARCH_TERM}" | sort -u )
+# 1. Fetch raw symbols and immediately filter out everything except FUNC type
+RAW_ALL=$( (readelf -sW "$BINARY" 2>/dev/null; readelf -DW "$BINARY" 2>/dev/null) | awk '
+    /Num:/ { next }
+    /Symbol table/ { next }
+    /^[[:space:]]*$/ { next }
+    {
+        # In standard readelf -W output:
+        # Type is usually in the 4th column ($4). We check if it is "FUNC".
+        # We also safeguard against ABS/UND just in case and ensure a valid name exists.
+        is_func = 0
+        is_bad = 0
+        
+        # Scan columns to find "FUNC" type and avoid ABS/UND
+        for (i=1; i<=NF; i++) {
+            if ($i == "FUNC") is_func = 1
+            if ($i == "ABS" || $i == "UND") is_bad = 1
+        }
+        
+        if (is_func && !is_bad && $NF != "Name" && $NF !~ /^[0-9]+$/ && $NF !~ /^\([0-9]+\)$/) {
+            print $0
+        }
+    }
+' | sort -u )
+
+# 2. Filter by search term if user did not pass '-'
+if [ "$SEARCH_TERM" = "-" ]; then
+    RAW_LINES="$RAW_ALL"
+else
+    RAW_LINES=$(echo "$RAW_ALL" | grep -E "[[:space:]]${SEARCH_TERM}" )
+fi
 
 if [ -z "$RAW_LINES" ]; then
-    echo "No symbols found matching: $SEARCH_TERM"
+    echo "No executable functions found matching: $SEARCH_TERM"
     exit 0
 fi
 
-# Extract unique symbol names (last column)
-UNIQUE_NAMES=$(echo "$RAW_LINES" | awk '{print $NF}' | sort -u)
+# 3. Extract unique, clean function names from our filtered dataset
+UNIQUE_NAMES=$(echo "$RAW_LINES" | awk '{print $NF}' | grep -E '^[a-zA-Z_][a-zA-Z0-9_@.]*$' | sort -u)
+
+if [ -z "$UNIQUE_NAMES" ]; then
+    if [ "$SEARCH_TERM" = "-" ]; then
+        echo "No valid functions found in the binary."
+    else
+        echo "No valid functions found matching: $SEARCH_TERM"
+    fi
+    exit 0
+fi
+
 TOTAL_FOUND=$(echo "$UNIQUE_NAMES" | wc -l)
 COUNT=$TOTAL_FOUND
 
 # If multiple symbols are found and the user provided an index, select that specific one
 if [ "$COUNT" -gt 1 ] && [ -n "$INDEX" ]; then
-    # Validate if INDEX is a proper number and within range
     if [[ "$INDEX" =~ ^[0-9]+$ ]] && [ "$INDEX" -le "$COUNT" ] && [ "$INDEX" -gt 0 ]; then
-        # Pick the N-th symbol from the list
         SELECTED_NAME=$(echo "$UNIQUE_NAMES" | sed -n "${INDEX}p")
-        # Filter RAW_LINES to match only this specific symbol line
         RAW_LINES=$(echo "$RAW_LINES" | grep -E "[[:space:]]${SELECTED_NAME}$")
         UNIQUE_NAMES="$SELECTED_NAME"
         COUNT=1
@@ -48,7 +85,6 @@ if [ "$COUNT" -gt 1 ] && [ -n "$INDEX" ]; then
 fi
 
 if [ "$COUNT" -eq 1 ]; then
-    # Clean up whitespace and full symbol string
     FULL_SYMBOL=$(echo "$UNIQUE_NAMES" | xargs)
     MATCH_LINE=$(echo "$RAW_LINES" | head -n 1)
     
@@ -57,35 +93,38 @@ if [ "$COUNT" -eq 1 ]; then
     
     if [[ "$ADDR" =~ ^[0-9a-fA-F]+$ ]] && [ "$SIZE" -gt 0 ]; then
         START_ADDR="0x$ADDR"
-        # Calculate end address using basic shell hex arithmetic
-        END_ADDR=$(printf "0x%x" $(( 0x$ADDR + SIZE )))
+        END_ADDR=$(printf "0x%016x" $(( 0x$ADDR + SIZE )))
         
         if [ "$TOTAL_FOUND" -gt 1 ]; then
-            echo "Found $TOTAL_FOUND symbols. Selected index $INDEX: $FULL_SYMBOL"
+            echo "Found $TOTAL_FOUND functions. Selected index $INDEX: $FULL_SYMBOL"
         else
-            echo "Found exactly 1 symbol: $FULL_SYMBOL"
+            echo "Found exactly 1 function: $FULL_SYMBOL"
         fi
         echo "Address: $START_ADDR to $END_ADDR (Size: $SIZE bytes)."
         
-        # Disassemble based on calculated precise address boundaries and strip headers/leading empty lines
+        # Disassemble using precise address limits
         objdump -M intel -d --start-address="$START_ADDR" --stop-address="$END_ADDR" "$BINARY" | \
-            sed -E '1,/Disassembly of section/d; /^[[:space:]]*$/d'
+            sed -E '1,/Disassembly of section/d; /^[[:space:]]*$/d'  | \
+            grep -v "Disassembly of section" | grep -v "file format"
     else
-        # Fallback to name if size parsing failed (unlikely)
         CLEAN_SYMBOL="${FULL_SYMBOL%%@*}"
         if [ "$TOTAL_FOUND" -gt 1 ]; then
-            echo "Found $TOTAL_FOUND symbols. Selected index $INDEX: $FULL_SYMBOL (Using name fallback)."
+            echo "Found $TOTAL_FOUND functions. Selected index $INDEX: $FULL_SYMBOL (Using name fallback)."
         else
-            echo "Found exactly 1 symbol: $FULL_SYMBOL (Using name fallback)."
+            echo "Found exactly 1 function: $FULL_SYMBOL (Using name fallback)."
         fi
+        
         objdump -M intel -d --disassemble="$CLEAN_SYMBOL" "$BINARY" | \
-            sed -E '1,/Disassembly of section/d; /^[[:space:]]*$/d'
+            sed -E '1,/Disassembly of section/d; /^[[:space:]]*$/d' | \
+            grep -v "Disassembly of section" | grep -v "file format"
+
     fi
     
 else
-    # If multiple symbols found and no valid index was chosen, list them with line numbers
-    echo "Multiple symbols found ($COUNT). Please narrow down your search or provide the index number as the 3rd argument:"
-    echo "--------------------------------------------------------"
+    if [ "$SEARCH_TERM" = "-" ]; then
+        echo "All valid functions found ($COUNT). Please select the index number as the 3rd argument:"
+    else
+        echo "Multiple functions found ($COUNT). Please narrow down your search or provide the index number as the 3rd argument:"
+    fi
     echo "$UNIQUE_NAMES" | awk '{print "  " NR ") " $0}'
-    echo "--------------------------------------------------------"
 fi
