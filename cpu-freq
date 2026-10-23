@@ -7,7 +7,7 @@ if [[ $# -eq 2 ]]; then
   	exit -1
   fi
   
-  echo Setting $1 freq "${2}Mhz"
+  echo Setting $1 freq "${2} Mhz"
   for ((i = 0 ; i < N ; i++ )); do 
     echo ${2}000 > /sys/bus/cpu/devices/cpu${i}/cpufreq/scaling_${1}_freq
   done
