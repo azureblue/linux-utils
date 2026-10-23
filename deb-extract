@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Użycie: deb-extract.sh PAKIET.deb KATALOG [FILTR_LUB_PLIK ...]
+
+Wypakowuje pliki bez struktury katalogów. Domyślny filtr: *.so*
+Filtry zapisuj w cudzysłowach, np. '*.so*' lub 'libfoo.so.1'.
+Można też podać pełną ścieżkę z pakietu, np. usr/lib/libfoo.so.1.
+Pliki o tej samej nazwie mogą się nadpisać.
+Dowiązania symboliczne są zachowywane; ich cele nie są automatycznie wypakowywane.
+EOF
+}
+
+if [[ ${1:-} == --help || ${1:-} == -h ]]; then
+    usage
+    exit 0
+fi
+if (( $# < 2 )); then
+    usage >&2
+    exit 2
+fi
+
+package=$1
+destination=$2
+shift 2
+
+[[ -f $package ]] || { printf 'Brak pakietu: %s\n' "$package" >&2; exit 1; }
+command -v dpkg-deb >/dev/null
+command -v tar >/dev/null
+mkdir -p -- "$destination"
+
+(( $# )) || set -- '*.so*'
+
+dpkg-deb --fsys-tarfile "$package" |
+    tar --extract --verbose --directory="$destination" \
+        --no-same-owner --no-same-permissions \
+        --wildcards --no-anchored \
+        --transform='flags=rh;s|.*/||' \
+        -- "$@"
+
