@@ -21,7 +21,7 @@ if [ ! -f "$BINARY" ]; then
 fi
 
 # 1. Fetch raw symbols and immediately filter out everything except FUNC type
-RAW_ALL=$( (readelf -sW "$BINARY" 2>/dev/null; readelf -DW "$BINARY" 2>/dev/null) | awk '
+RAW_ALL=$( (readelf -sW "$BINARY" 2>/dev/null) | awk '
     /Num:/ { next }
     /Symbol table/ { next }
     /^[[:space:]]*$/ { next }
