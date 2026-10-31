@@ -30,3 +30,4 @@ ln -s ${BASE_PATH}temp2_input /tmp/.sys-mon/temp2
 ln -s ${BASE_PATH}temp3_input /tmp/.sys-mon/temp3
 ln -s ${BASE_PATH}temp4_input /tmp/.sys-mon/temp4
 ln -s ${BASE_PATH}temp5_input /tmp/.sys-mon/temp5
+ln -s /sys/module/i915/drivers/pci\:i915/0000\:00\:02.0/drm/card1/gt/gt0/rc6_residency_ms /tmp/.sys-mon/gpu_r6_ms
